@@ -320,22 +320,6 @@
     "applyType": "unknown"
   },
   {
-    "key": "ニンジャスピナー|Joshin(ジョーシン)|全国規模|3/3 〜 3/6",
-    "productName": "ニンジャスピナー",
-    "storeName": "Joshin(ジョーシン)",
-    "area": "全国規模",
-    "entryPeriod": "3/3 〜 3/6",
-    "lotteryDate": "3/12",
-    "salesPeriod": "3/13 〜 3/19",
-    "entryStartDate": "2026-03-03",
-    "entryEndDate": "2026-03-06",
-    "sourceUrl": "https://laurier-hub.com/lottery/",
-    "xPostUrl": "https://x.com/laurier_news/status/2028299208789520426?s=46",
-    "applyUrl": "",
-    "applyLabel": "",
-    "applyType": "unknown"
-  },
-  {
     "key": "ニンジャスピナー|トレカエース|全国規模|3/2 〜 3/8",
     "productName": "ニンジャスピナー",
     "storeName": "トレカエース",
@@ -443,22 +427,6 @@
     "entryEndDate": "2026-03-01",
     "sourceUrl": "https://laurier-hub.com/lottery/",
     "xPostUrl": "https://x.com/laurier_news/status/2025406444032676280?s=46",
-    "applyUrl": "",
-    "applyLabel": "",
-    "applyType": "unknown"
-  },
-  {
-    "key": "ニンジャスピナー|ヤマダデンキ|全国規模|2/23 〜 2/24",
-    "productName": "ニンジャスピナー",
-    "storeName": "ヤマダデンキ",
-    "area": "全国規模",
-    "entryPeriod": "2/23 〜 2/24",
-    "lotteryDate": "3/11",
-    "salesPeriod": "3/13 〜 3/19",
-    "entryStartDate": "2026-02-23",
-    "entryEndDate": "2026-02-24",
-    "sourceUrl": "https://laurier-hub.com/lottery/",
-    "xPostUrl": "https://x.com/laurier_news/status/2025085896996118538?s=46",
     "applyUrl": "",
     "applyLabel": "",
     "applyType": "unknown"
