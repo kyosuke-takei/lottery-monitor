@@ -1,6 +1,21 @@
 [
   {
     "source": "lhub",
+    "itemId": "8ab6caca7b8602852c5f0bafe3d38cf8d1f03c46",
+    "productName": "インフェルノX",
+    "storeName": "ヤマシロヤオンライン",
+    "area": "通販店舗",
+    "entryPeriod": "4/10 〜 4/12",
+    "entryStart": "2026-04-10",
+    "entryEnd": "2026-04-12",
+    "lotteryDate": null,
+    "salePeriod": null,
+    "url": "https://api.twitter.com/",
+    "applyType": "online",
+    "fetchedAt": "2026-04-10T16:19:43.952Z"
+  },
+  {
+    "source": "lhub",
     "itemId": "d86e02d6d8f2099be28b49e2751a20011509012d",
     "productName": "ムニキスゼロ",
     "storeName": "しまむらパーク",
@@ -10,9 +25,9 @@
     "entryEnd": "2026-04-11",
     "lotteryDate": null,
     "salePeriod": null,
-    "url": "https://x.com/laurier_news/status/2041354420328464477?s=46",
+    "url": "https://api.twitter.com/",
     "applyType": "online",
-    "fetchedAt": "2026-04-10T10:49:39.070Z"
+    "fetchedAt": "2026-04-10T16:19:43.952Z"
   },
   {
     "source": "lhub",
@@ -25,9 +40,9 @@
     "entryEnd": "2026-04-11",
     "lotteryDate": null,
     "salePeriod": null,
-    "url": "https://x.com/laurier_news/status/2041354420328464477?s=46",
+    "url": "https://api.twitter.com/",
     "applyType": "online",
-    "fetchedAt": "2026-04-10T10:49:39.070Z"
+    "fetchedAt": "2026-04-10T16:19:43.952Z"
   },
   {
     "source": "lhub",
@@ -40,9 +55,9 @@
     "entryEnd": "2026-04-11",
     "lotteryDate": null,
     "salePeriod": null,
-    "url": "https://x.com/laurier_news/status/2041354420328464477?s=46",
+    "url": "https://api.twitter.com/",
     "applyType": "online",
-    "fetchedAt": "2026-04-10T10:49:39.070Z"
+    "fetchedAt": "2026-04-10T16:19:43.952Z"
   },
   {
     "source": "lhub",
@@ -57,7 +72,7 @@
     "salePeriod": null,
     "url": "https://amzn.to/460HmPK",
     "applyType": "online",
-    "fetchedAt": "2026-04-10T10:49:39.070Z"
+    "fetchedAt": "2026-04-10T16:19:43.952Z"
   },
   {
     "source": "lhub",
@@ -72,7 +87,7 @@
     "salePeriod": null,
     "url": "http://amzn.to/3T8jlQF",
     "applyType": "online",
-    "fetchedAt": "2026-04-10T10:49:39.070Z"
+    "fetchedAt": "2026-04-10T16:19:43.952Z"
   },
   {
     "source": "lhub",
@@ -87,7 +102,7 @@
     "salePeriod": null,
     "url": "https://laurier-hub.com/lottery/",
     "applyType": "online",
-    "fetchedAt": "2026-04-10T10:49:39.070Z"
+    "fetchedAt": "2026-04-10T16:19:43.952Z"
   },
   {
     "source": "lhub",
@@ -102,7 +117,7 @@
     "salePeriod": null,
     "url": "https://amzn.to/4mmH6lx",
     "applyType": "online",
-    "fetchedAt": "2026-04-10T10:49:39.070Z"
+    "fetchedAt": "2026-04-10T16:19:43.952Z"
   },
   {
     "source": "lhub",
@@ -117,7 +132,7 @@
     "salePeriod": null,
     "url": "https://amzn.to/4jLSfdQ",
     "applyType": "online",
-    "fetchedAt": "2026-04-10T10:49:39.070Z"
+    "fetchedAt": "2026-04-10T16:19:43.952Z"
   },
   {
     "source": "lhub",
@@ -132,7 +147,7 @@
     "salePeriod": null,
     "url": "https://www.amazon.co.jp/dp/B0DP47WZK5?aod=1&m=AN1VRQENFRJN5&linkCode=sl1&tag=laurier06-22",
     "applyType": "online",
-    "fetchedAt": "2026-04-10T10:49:39.070Z"
+    "fetchedAt": "2026-04-10T16:19:43.952Z"
   },
   {
     "source": "lhub",
@@ -147,7 +162,7 @@
     "salePeriod": null,
     "url": "http://amzn.to/4hRymQU",
     "applyType": "online",
-    "fetchedAt": "2026-04-10T10:49:39.070Z"
+    "fetchedAt": "2026-04-10T16:19:43.952Z"
   },
   {
     "source": "lhub",
@@ -162,7 +177,7 @@
     "salePeriod": null,
     "url": "http://amzn.to/3F71s0B",
     "applyType": "online",
-    "fetchedAt": "2026-04-10T10:49:39.070Z"
+    "fetchedAt": "2026-04-10T16:19:43.952Z"
   },
   {
     "source": "lhub",
@@ -177,7 +192,7 @@
     "salePeriod": null,
     "url": "http://amzn.to/4b0V7jy",
     "applyType": "online",
-    "fetchedAt": "2026-04-10T10:49:39.070Z"
+    "fetchedAt": "2026-04-10T16:19:43.952Z"
   },
   {
     "source": "lhub",
@@ -192,7 +207,7 @@
     "salePeriod": null,
     "url": "http://amzn.to/42UBisa",
     "applyType": "online",
-    "fetchedAt": "2026-04-10T10:49:39.070Z"
+    "fetchedAt": "2026-04-10T16:19:43.952Z"
   },
   {
     "source": "lhub",
@@ -207,7 +222,7 @@
     "salePeriod": null,
     "url": "http://amzn.to/42AePjz",
     "applyType": "online",
-    "fetchedAt": "2026-04-10T10:49:39.070Z"
+    "fetchedAt": "2026-04-10T16:19:43.952Z"
   },
   {
     "source": "lhub",
@@ -222,7 +237,7 @@
     "salePeriod": null,
     "url": "http://amzn.to/3DmqM2a",
     "applyType": "online",
-    "fetchedAt": "2026-04-10T10:49:39.070Z"
+    "fetchedAt": "2026-04-10T16:19:43.952Z"
   },
   {
     "source": "lhub",
@@ -237,7 +252,7 @@
     "salePeriod": null,
     "url": "http://amzn.to/4ienrkG",
     "applyType": "online",
-    "fetchedAt": "2026-04-10T10:49:39.070Z"
+    "fetchedAt": "2026-04-10T16:19:43.952Z"
   },
   {
     "source": "lhub",
@@ -252,6 +267,6 @@
     "salePeriod": null,
     "url": "http://amzn.to/428gGKP",
     "applyType": "online",
-    "fetchedAt": "2026-04-10T10:49:39.070Z"
+    "fetchedAt": "2026-04-10T16:19:43.952Z"
   }
 ]
