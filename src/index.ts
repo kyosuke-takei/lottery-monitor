@@ -1,194 +1,222 @@
-import "dotenv/config"
-import fs from "fs"
-import path from "path"
-import dayjs from "dayjs"
+import axios from "axios";
+import fs from "fs";
+import path from "path";
+import { compareLotteryItems } from "./diff/compare";
+import { fetchLhubLotteryItems } from "./fetchers/lhub";
+import { DiffResult, LotteryItem } from "./types";
 
-import { fetchLhubLotteryItems } from "./fetchers/lhub"
-import { compareLotteryItems } from "./diff/compare"
-import { postToSlack } from "./notify/slack"
-import { resolveApplyInfoFromXPost } from "./fetchers/xResolver"
+const DATA_DIR = path.resolve(process.cwd(), "data");
+const LATEST_FILE = path.join(DATA_DIR, "latest.json");
+const INITIAL_SEED_SILENT = true;
+const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || "";
+const SLACK_MAX_LINES = Number(process.env.SLACK_MAX_LINES || "40");
 
-import type { LotteryItem } from "./types"
-
-const dataDir = path.join(process.cwd(), "data")
-const latestFile = path.join(dataDir, "latest.json")
-const notifiedFile = path.join(dataDir, "notified.json")
-
-function load<T>(file: string, fallback: T): T {
-  if (!fs.existsSync(file)) return fallback
-
-  const raw = fs.readFileSync(file, "utf8").trim()
-  if (!raw) return fallback
-
-  return JSON.parse(raw) as T
-}
-
-function save(file: string, data: unknown) {
-  fs.writeFileSync(file, JSON.stringify(data, null, 2))
-}
-
-function isOpenNow(item: LotteryItem) {
-  if (!item.entryStartDate || !item.entryEndDate) return false
-
-  const today = dayjs().format("YYYY-MM-DD")
-  return today >= item.entryStartDate && today <= item.entryEndDate
-}
-
-function isTomorrow(item: LotteryItem) {
-  const tomorrow = dayjs().add(1, "day").format("YYYY-MM-DD")
-  return item.entryEndDate === tomorrow
-}
-
-function isToday(item: LotteryItem) {
-  const today = dayjs().format("YYYY-MM-DD")
-  return item.entryEndDate === today
-}
-
-async function enrichApplyInfo(item: LotteryItem): Promise<LotteryItem> {
-  if (!item.xPostUrl) return item
-
-  const resolved = await resolveApplyInfoFromXPost(item.xPostUrl)
-
-  return {
-    ...item,
-    applyUrl: resolved.applyUrl,
-    applyLabel: resolved.applyLabel,
-    applyType: resolved.applyType
+function ensureDataDir(): void {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
   }
 }
 
-function buildApplyLines(i: LotteryItem): string[] {
-  if (i.applyType === "url" && i.applyUrl) {
-    return [`応募リンク: ${i.applyUrl}`]
-  }
+function loadPreviousItems(): LotteryItem[] {
+  try {
+    if (!fs.existsSync(LATEST_FILE)) {
+      return [];
+    }
 
-  if (i.applyType === "store" && i.applyLabel) {
-    return [`応募方法: ${i.applyLabel}`]
-  }
+    const raw = fs.readFileSync(LATEST_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
 
-  if (i.applyLabel) {
-    return [`応募方法: ${i.applyLabel}`]
-  }
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
 
-  if (i.xPostUrl) {
-    return [`参考X: ${i.xPostUrl}`]
+    return parsed as LotteryItem[];
+  } catch (error) {
+    console.error("[loadPreviousItems] failed:", error);
+    return [];
   }
-
-  return []
 }
 
-function msgNew(i: LotteryItem) {
+function saveLatestItems(items: LotteryItem[]): void {
+  ensureDataDir();
+  fs.writeFileSync(LATEST_FILE, JSON.stringify(items, null, 2), "utf-8");
+}
+
+function formatItem(item: LotteryItem): string {
   return [
-    "【新規抽選】",
-    `商品: ${i.productName}`,
-    `店舗: ${i.storeName}`,
-    `エリア: ${i.area}`,
-    `応募期間: ${i.entryPeriod}`,
-    `抽選日: ${i.lotteryDate}`,
-    `販売期間: ${i.salesPeriod}`,
-    ...buildApplyLines(i)
-  ].join("\n")
+    `商品: ${item.productName}`,
+    `店舗: ${item.storeName}`,
+    `エリア: ${item.area || "-"}`,
+    `応募期間: ${item.entryPeriod || "-"}`,
+    `抽選日: ${item.lotteryDate || "-"}`,
+    `販売期間: ${item.salePeriod || "-"}`,
+    `応募種別: ${item.applyType}`,
+    `リンク: ${item.url || "-"}`,
+  ].join("\n");
 }
 
-function msgUpdate(
+function formatItemCompact(item: LotteryItem): string {
+  return [
+    `商品: ${item.productName}`,
+    `店舗: ${item.storeName}`,
+    `エリア: ${item.area || "-"}`,
+    `応募期間: ${item.entryPeriod || "-"}`,
+    `リンク: ${item.url || "-"}`,
+  ].join("\n");
+}
+
+function formatChangedItem(
   before: LotteryItem,
   after: LotteryItem,
-  changedFields: string[]
-) {
+  changedFields: Array<keyof LotteryItem>,
+): string {
   return [
-    "【抽選情報更新】",
     `商品: ${after.productName}`,
     `店舗: ${after.storeName}`,
     `変更項目: ${changedFields.join(", ")}`,
-    "",
-    `応募期間: ${before.entryPeriod} → ${after.entryPeriod}`,
-    `抽選日: ${before.lotteryDate} → ${after.lotteryDate}`,
-    `販売期間: ${before.salesPeriod} → ${after.salesPeriod}`,
-    ...buildApplyLines(after)
-  ].join("\n")
+    `変更後の応募期間: ${after.entryPeriod || "-"}`,
+    `変更後リンク: ${after.url || "-"}`,
+    `変更前リンク: ${before.url || "-"}`,
+  ].join("\n");
 }
 
-function msgToday(i: LotteryItem) {
-  return [
-    "【本日締切】",
-    `商品: ${i.productName}`,
-    `店舗: ${i.storeName}`,
-    `応募締切: 本日 (${i.entryEndDate})`,
-    `応募期間: ${i.entryPeriod}`,
-    ...buildApplyLines(i)
-  ].join("\n")
-}
-
-function msgTomorrow(i: LotteryItem) {
-  return [
-    "【締切明日】",
-    `商品: ${i.productName}`,
-    `店舗: ${i.storeName}`,
-    `応募締切: 明日 (${i.entryEndDate})`,
-    `応募期間: ${i.entryPeriod}`,
-    ...buildApplyLines(i)
-  ].join("\n")
-}
-
-async function main() {
-  const previous: LotteryItem[] = load(latestFile, [])
-  const notified: Record<string, boolean> = load(notifiedFile, {})
-
-  const current = await fetchLhubLotteryItems()
-  const diff = compareLotteryItems(previous, current)
+function printDiff(diff: DiffResult): void {
+  if (
+    diff.added.length === 0 &&
+    diff.removed.length === 0 &&
+    diff.changed.length === 0
+  ) {
+    console.log("[diff] no changes");
+    return;
+  }
 
   for (const item of diff.added) {
-    if (!isOpenNow(item)) continue
-
-    const key = `new:${item.key}`
-    if (notified[key]) continue
-
-    const enriched = await enrichApplyInfo(item)
-    await postToSlack(msgNew(enriched))
-    notified[key] = true
+    console.log("\n【新規抽選】");
+    console.log(formatItem(item));
   }
 
-  for (const u of diff.updated) {
-    if (!isOpenNow(u.after)) continue
-
-    const key = `update:${u.after.key}:${u.after.entryPeriod}`
-    if (notified[key]) continue
-
-    const enriched = await enrichApplyInfo(u.after)
-    await postToSlack(msgUpdate(u.before, enriched, u.changedFields))
-    notified[key] = true
+  for (const item of diff.removed) {
+    console.log("\n【掲載終了】");
+    console.log(formatItem(item));
   }
 
-  for (const item of current) {
-    if (isTomorrow(item)) {
-      const key = `tomorrow:${item.key}:${item.entryEndDate}`
-
-      if (!notified[key]) {
-        const enriched = await enrichApplyInfo(item)
-        await postToSlack(msgTomorrow(enriched))
-        notified[key] = true
-      }
-    }
-
-    if (isToday(item)) {
-      const today = dayjs().format("YYYY-MM-DD")
-      const key = `today:${item.key}:${today}`
-
-      if (!notified[key]) {
-        const enriched = await enrichApplyInfo(item)
-        await postToSlack(msgToday(enriched))
-        notified[key] = true
-      }
-    }
+  for (const item of diff.changed) {
+    console.log("\n【内容変更】");
+    console.log(`変更項目: ${item.changedFields.join(", ")}`);
+    console.log(formatItem(item.after));
   }
-
-  save(latestFile, current)
-  save(notifiedFile, notified)
-
-  console.log("monitor complete")
 }
 
-main().catch((err) => {
-  console.error(err)
-  process.exit(1)
-})
+function buildSlackLines(diff: DiffResult): string[] {
+  const lines: string[] = [];
+
+  for (const item of diff.added) {
+    lines.push("【新規抽選】");
+    lines.push(formatItemCompact(item));
+    lines.push("");
+  }
+
+  for (const item of diff.changed) {
+    lines.push("【内容変更】");
+    lines.push(formatChangedItem(item.before, item.after, item.changedFields));
+    lines.push("");
+  }
+
+  for (const item of diff.removed) {
+    lines.push("【掲載終了】");
+    lines.push(formatItemCompact(item));
+    lines.push("");
+  }
+
+  while (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+
+  return lines;
+}
+
+function chunkSlackLines(lines: string[], maxLines: number): string[] {
+  const chunks: string[] = [];
+  const size = Math.max(1, maxLines);
+
+  for (let i = 0; i < lines.length; i += size) {
+    const chunk = lines.slice(i, i + size).join("\n");
+    if (chunk.trim()) {
+      chunks.push(chunk);
+    }
+  }
+
+  return chunks;
+}
+
+async function postToSlack(text: string): Promise<void> {
+  if (!SLACK_WEBHOOK_URL) {
+    console.log("[slack] skipped: SLACK_WEBHOOK_URL is not set");
+    return;
+  }
+
+  await axios.post(
+    SLACK_WEBHOOK_URL,
+    { text },
+    {
+      timeout: 20000,
+      headers: {
+        "Content-Type": "application/json",
+      },
+      validateStatus: (status) => status >= 200 && status < 300,
+    },
+  );
+}
+
+async function sendDiffToSlack(diff: DiffResult): Promise<void> {
+  const hasDiff =
+    diff.added.length > 0 || diff.removed.length > 0 || diff.changed.length > 0;
+
+  if (!hasDiff) {
+    console.log("[slack] skipped: no changes");
+    return;
+  }
+
+  const lines = buildSlackLines(diff);
+  const chunks = chunkSlackLines(lines, SLACK_MAX_LINES);
+
+  console.log(`[slack] chunks=${chunks.length}`);
+
+  for (let i = 0; i < chunks.length; i += 1) {
+    const header =
+      chunks.length === 1
+        ? "🎯 抽選情報の更新があります"
+        : `🎯 抽選情報の更新があります (${i + 1}/${chunks.length})`;
+
+    const body = `${header}\n\n${chunks[i]}`;
+    await postToSlack(body);
+    console.log(`[slack] sent ${i + 1}/${chunks.length}`);
+  }
+}
+
+async function main(): Promise<void> {
+  const previousItems = loadPreviousItems();
+  const currentItems = await fetchLhubLotteryItems();
+
+  if (INITIAL_SEED_SILENT && previousItems.length === 0) {
+    saveLatestItems(currentItems);
+    console.log(`[seed] initial snapshot saved: ${currentItems.length} items`);
+    return;
+  }
+
+  const diff = compareLotteryItems(previousItems, currentItems);
+
+  printDiff(diff);
+  await sendDiffToSlack(diff);
+  saveLatestItems(currentItems);
+
+  console.log(`\n[done] previous=${previousItems.length} current=${currentItems.length}`);
+  console.log(
+    `[done] added=${diff.added.length} removed=${diff.removed.length} changed=${diff.changed.length}`,
+  );
+}
+
+main().catch((error) => {
+  console.error("[fatal]", error);
+  process.exit(1);
+});
