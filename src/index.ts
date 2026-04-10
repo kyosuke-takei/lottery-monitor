@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 type LotteryItem = {
   key: string;
@@ -57,7 +57,6 @@ function cleanText(text: string): string {
 function normalizeUrl(rawUrl: string, baseUrl?: string): string {
   try {
     let fixed = (rawUrl || "").trim();
-
     if (!fixed) return "";
 
     if (fixed.startsWith("javascript:") || fixed.startsWith("#")) {
@@ -74,10 +73,11 @@ function normalizeUrl(rawUrl: string, baseUrl?: string): string {
 
     const u = new URL(fixed);
 
-    u.hostname = u.hostname.replace(/^ww\./i, "www.");
-    u.hostname = u.hostname.replace(/^w\./i, "www.");
-
-    if (!u.hostname.startsWith("www.") && !u.hostname.includes("x.com")) {
+    if (
+      !u.hostname.startsWith("www.") &&
+      !u.hostname.includes("x.com") &&
+      !u.hostname.includes("twitter.com")
+    ) {
       u.hostname = "www." + u.hostname;
     }
 
@@ -122,7 +122,6 @@ async function isAccessibleUrl(url: string): Promise<boolean> {
 
 async function ensureAccessibleUrl(rawUrl: string, baseUrl?: string): Promise<string> {
   const normalized = normalizeUrl(rawUrl, baseUrl);
-
   if (!normalized) return "";
 
   if (await isAccessibleUrl(normalized)) {
@@ -140,7 +139,7 @@ async function ensureAccessibleUrl(rawUrl: string, baseUrl?: string): Promise<st
       if (await isAccessibleUrl(noWwwUrl)) {
         return noWwwUrl;
       }
-    } else if (!u.hostname.includes("x.com")) {
+    } else if (!u.hostname.includes("x.com") && !u.hostname.includes("twitter.com")) {
       const withWww = new URL(normalized);
       withWww.hostname = "www." + withWww.hostname;
       const withWwwUrl = withWww.toString();
@@ -168,43 +167,167 @@ function buildKey(item: Omit<LotteryItem, "key">): string {
   ].join("|");
 }
 
-function extractProductAndStoreFromFirstTd(firstTdText: string): {
-  productName: string;
-  storeName: string;
-} {
-  const lines = firstTdText
-    .split("\n")
-    .map((line) => cleanText(line))
-    .filter(Boolean)
-    .filter((line) => !["New", "NEW", "当選", "落選"].includes(line));
-
-  const productName = lines[0] || "";
-  const storeName = lines[1] || "";
-
-  return { productName, storeName };
+function isDateRangeLine(line: string): boolean {
+  return /\d{1,2}\/\d{1,2}\s*〜\s*\d{1,2}\/\d{1,2}/.test(line);
 }
 
-function pickBestLink($row: cheerio.Cheerio<any>, baseUrl: string): string {
-  let href = "";
+function isSingleDateOrDash(line: string): boolean {
+  return line === "-" || /^\d{1,2}\/\d{1,2}$/.test(line);
+}
 
-  $row.find("a[href]").each((_, a) => {
-    const candidate = cleanText($row.find(a).attr("href") || "");
-    if (!candidate) return;
+function isAreaLine(line: string): boolean {
+  return (
+    line.includes("通販店舗") ||
+    line.includes("全国規模") ||
+    line.includes("東京都") ||
+    line.includes("北海道") ||
+    line.includes("青森県") ||
+    line.includes("岩手県") ||
+    line.includes("宮城県") ||
+    line.includes("秋田県") ||
+    line.includes("山形県") ||
+    line.includes("福島県") ||
+    line.includes("茨城県") ||
+    line.includes("栃木県") ||
+    line.includes("群馬県") ||
+    line.includes("埼玉県") ||
+    line.includes("千葉県") ||
+    line.includes("神奈川県") ||
+    line.includes("新潟県") ||
+    line.includes("富山県") ||
+    line.includes("石川県") ||
+    line.includes("福井県") ||
+    line.includes("山梨県") ||
+    line.includes("長野県") ||
+    line.includes("岐阜県") ||
+    line.includes("静岡県") ||
+    line.includes("愛知県") ||
+    line.includes("三重県") ||
+    line.includes("滋賀県") ||
+    line.includes("京都府") ||
+    line.includes("大阪府") ||
+    line.includes("兵庫県") ||
+    line.includes("奈良県") ||
+    line.includes("和歌山県") ||
+    line.includes("鳥取県") ||
+    line.includes("島根県") ||
+    line.includes("岡山県") ||
+    line.includes("広島県") ||
+    line.includes("山口県") ||
+    line.includes("徳島県") ||
+    line.includes("香川県") ||
+    line.includes("愛媛県") ||
+    line.includes("高知県") ||
+    line.includes("福岡県") ||
+    line.includes("佐賀県") ||
+    line.includes("長崎県") ||
+    line.includes("熊本県") ||
+    line.includes("大分県") ||
+    line.includes("宮崎県") ||
+    line.includes("鹿児島県") ||
+    line.includes("沖縄県") ||
+    line === "------"
+  );
+}
+
+function extractLinksInOrder($: cheerio.CheerioAPI): string[] {
+  const urls: string[] = [];
+
+  $("a[href]").each((_, a) => {
+    const href = cleanText($(a).attr("href") || "");
+    if (!href) return;
 
     if (
-      candidate.includes("x.com/laurier_news/") ||
-      candidate.includes("twitter.com/laurier_news/")
+      href.includes("x.com/laurier_news/") ||
+      href.includes("twitter.com/laurier_news/")
     ) {
-      href = candidate;
-      return false;
-    }
-
-    if (!href) {
-      href = candidate;
+      urls.push(normalizeUrl(href, TARGET_URL));
     }
   });
 
-  return normalizeUrl(href, baseUrl);
+  return urls;
+}
+
+function parseLotteryItemsFromBodyText(bodyText: string, xLinks: string[]): LotteryItem[] {
+  const lines = bodyText
+    .split("\n")
+    .map((line) => cleanText(line))
+    .filter(Boolean)
+    .filter(
+      (line) =>
+        ![
+          "LHUB",
+          "ログイン",
+          "無料登録",
+          "TOP",
+          "抽選情報",
+          "メディア記事",
+          "商品フィルター",
+          "商品/店舗名",
+          "都道府県",
+          "応募期間",
+          "抽選",
+          "販売期間",
+          "応募▽",
+          "当選",
+          "落選",
+          "編集",
+          "削除",
+          "Image",
+        ].includes(line)
+    );
+
+  const items: LotteryItem[] = [];
+  let linkIndex = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (line === "New" || line === "NEW") {
+      continue;
+    }
+
+    const productName = line;
+    const storeName = lines[i + 1] || "";
+    const area = lines[i + 2] || "";
+    const entryPeriod = lines[i + 3] || "";
+    const lotteryDate = lines[i + 4] || "";
+    const salesPeriod = lines[i + 5] || "";
+
+    const looksLikeItem =
+      productName &&
+      storeName &&
+      isAreaLine(area) &&
+      isDateRangeLine(entryPeriod) &&
+      isSingleDateOrDash(lotteryDate) &&
+      isSingleDateOrDash(salesPeriod);
+
+    if (!looksLikeItem) {
+      continue;
+    }
+
+    const sourceUrl = xLinks[linkIndex] || TARGET_URL;
+    linkIndex += 1;
+
+    const itemWithoutKey: Omit<LotteryItem, "key"> = {
+      productName,
+      storeName,
+      area,
+      entryPeriod,
+      lotteryDate,
+      salesPeriod,
+      sourceUrl,
+    };
+
+    items.push({
+      ...itemWithoutKey,
+      key: buildKey(itemWithoutKey),
+    });
+
+    i += 5;
+  }
+
+  return items;
 }
 
 async function fetchLotteryItems(): Promise<LotteryItem[]> {
@@ -219,43 +342,17 @@ async function fetchLotteryItems(): Promise<LotteryItem[]> {
   });
 
   const $ = cheerio.load(res.data);
-  const items: LotteryItem[] = [];
 
-  $("table tr").each((_, tr) => {
-    const $tr = $(tr);
-    const tds = $tr.find("td");
+  const xLinks = extractLinksInOrder($);
+  const bodyText = $("body").text();
 
-    if (tds.length < 5) return;
-
-    const firstTdText = $(tds[0]).text();
-    const { productName, storeName } = extractProductAndStoreFromFirstTd(firstTdText);
-
-    const area = cleanText($(tds[1]).text());
-    const entryPeriod = cleanText($(tds[2]).text());
-    const lotteryDate = cleanText($(tds[3]).text());
-    const salesPeriod = cleanText($(tds[4]).text());
-    const href = pickBestLink($tr, TARGET_URL);
-
-    if (!productName || !storeName) return;
-
-    items.push({
-      key: "",
-      productName,
-      storeName,
-      area: area || "-",
-      entryPeriod: entryPeriod || "-",
-      lotteryDate: lotteryDate || "-",
-      salesPeriod: salesPeriod || "-",
-      sourceUrl: href || TARGET_URL,
-    });
-  });
-
-  console.log("[FETCH] raw item count:", items.length);
+  const rawItems = parseLotteryItemsFromBodyText(bodyText, xLinks);
+  console.log("[FETCH] raw item count:", rawItems.length);
 
   const normalizedItems: LotteryItem[] = [];
   const seen = new Set<string>();
 
-  for (const item of items) {
+  for (const item of rawItems) {
     const safeUrl = await ensureAccessibleUrl(item.sourceUrl, TARGET_URL);
 
     const completed: Omit<LotteryItem, "key"> = {
@@ -275,7 +372,6 @@ async function fetchLotteryItems(): Promise<LotteryItem[]> {
   }
 
   console.log("[FETCH] normalized item count:", normalizedItems.length);
-
   return normalizedItems;
 }
 
@@ -329,7 +425,6 @@ async function main() {
     const newItems = await fetchLotteryItems();
 
     const { added } = diffItems(oldItems, newItems);
-
     console.log("[DIFF] added:", added.length);
 
     for (const item of added) {
