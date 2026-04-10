@@ -2,6 +2,9 @@ import axios from "axios";
 import * as cheerio from "cheerio";
 import fs from "fs";
 import path from "path";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 type LotteryItem = {
   key: string;
@@ -57,32 +60,24 @@ function normalizeUrl(rawUrl: string, baseUrl?: string): string {
 
     if (!fixed) return "";
 
-    // javascript: / # を除外
-    if (
-      fixed.startsWith("javascript:") ||
-      fixed.startsWith("#")
-    ) {
+    if (fixed.startsWith("javascript:") || fixed.startsWith("#")) {
       return "";
     }
 
-    // 相対URLを絶対URL化
     if (baseUrl) {
       fixed = new URL(fixed, baseUrl).toString();
     }
 
-    // http/https が無い場合
     if (!/^https?:\/\//i.test(fixed)) {
       fixed = "https://" + fixed;
     }
 
     const u = new URL(fixed);
 
-    // よくあるホスト崩れを最低限補正
     u.hostname = u.hostname.replace(/^ww\./i, "www.");
     u.hostname = u.hostname.replace(/^w\./i, "www.");
 
-    // www が無い場合は補完
-    if (!u.hostname.startsWith("www.")) {
+    if (!u.hostname.startsWith("www.") && !u.hostname.includes("x.com")) {
       u.hostname = "www." + u.hostname;
     }
 
@@ -95,21 +90,28 @@ function normalizeUrl(rawUrl: string, baseUrl?: string): string {
 
 async function isAccessibleUrl(url: string): Promise<boolean> {
   try {
-    const res = await axios.head(url, {
+    const headRes = await axios.head(url, {
       timeout: 10000,
       maxRedirects: 5,
       validateStatus: () => true,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      },
     });
 
-    if (res.status >= 200 && res.status < 400) {
+    if (headRes.status >= 200 && headRes.status < 400) {
       return true;
     }
 
-    // HEAD を嫌うサイト対策
     const getRes = await axios.get(url, {
       timeout: 10000,
       maxRedirects: 5,
       validateStatus: () => true,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+      },
     });
 
     return getRes.status >= 200 && getRes.status < 400;
@@ -130,7 +132,6 @@ async function ensureAccessibleUrl(rawUrl: string, baseUrl?: string): Promise<st
   try {
     const u = new URL(normalized);
 
-    // wwwあり → なし を試す
     if (u.hostname.startsWith("www.")) {
       const noWww = new URL(normalized);
       noWww.hostname = noWww.hostname.replace(/^www\./, "");
@@ -139,8 +140,7 @@ async function ensureAccessibleUrl(rawUrl: string, baseUrl?: string): Promise<st
       if (await isAccessibleUrl(noWwwUrl)) {
         return noWwwUrl;
       }
-    } else {
-      // wwwなし → あり を試す
+    } else if (!u.hostname.includes("x.com")) {
       const withWww = new URL(normalized);
       withWww.hostname = "www." + withWww.hostname;
       const withWwwUrl = withWww.toString();
@@ -168,6 +168,45 @@ function buildKey(item: Omit<LotteryItem, "key">): string {
   ].join("|");
 }
 
+function extractProductAndStoreFromFirstTd(firstTdText: string): {
+  productName: string;
+  storeName: string;
+} {
+  const lines = firstTdText
+    .split("\n")
+    .map((line) => cleanText(line))
+    .filter(Boolean)
+    .filter((line) => !["New", "NEW", "当選", "落選"].includes(line));
+
+  const productName = lines[0] || "";
+  const storeName = lines[1] || "";
+
+  return { productName, storeName };
+}
+
+function pickBestLink($row: cheerio.Cheerio<any>, baseUrl: string): string {
+  let href = "";
+
+  $row.find("a[href]").each((_, a) => {
+    const candidate = cleanText($row.find(a).attr("href") || "");
+    if (!candidate) return;
+
+    if (
+      candidate.includes("x.com/laurier_news/") ||
+      candidate.includes("twitter.com/laurier_news/")
+    ) {
+      href = candidate;
+      return false;
+    }
+
+    if (!href) {
+      href = candidate;
+    }
+  });
+
+  return normalizeUrl(href, baseUrl);
+}
+
 async function fetchLotteryItems(): Promise<LotteryItem[]> {
   console.log("[FETCH] open:", TARGET_URL);
 
@@ -183,22 +222,19 @@ async function fetchLotteryItems(): Promise<LotteryItem[]> {
   const items: LotteryItem[] = [];
 
   $("table tr").each((_, tr) => {
-    const tds = $(tr).find("td");
+    const $tr = $(tr);
+    const tds = $tr.find("td");
 
-    // 想定: 7列
-    if (tds.length < 7) return;
+    if (tds.length < 5) return;
 
-    const productName = cleanText($(tds[0]).text());
-    const storeName = cleanText($(tds[1]).text());
-    const area = cleanText($(tds[2]).text());
-    const entryPeriod = cleanText($(tds[3]).text());
-    const lotteryDate = cleanText($(tds[4]).text());
-    const salesPeriod = cleanText($(tds[5]).text());
+    const firstTdText = $(tds[0]).text();
+    const { productName, storeName } = extractProductAndStoreFromFirstTd(firstTdText);
 
-    const href =
-      $(tds[6]).find("a").attr("href") ||
-      $(tds[0]).find("a").attr("href") ||
-      "";
+    const area = cleanText($(tds[1]).text());
+    const entryPeriod = cleanText($(tds[2]).text());
+    const lotteryDate = cleanText($(tds[3]).text());
+    const salesPeriod = cleanText($(tds[4]).text());
+    const href = pickBestLink($tr, TARGET_URL);
 
     if (!productName || !storeName) return;
 
@@ -206,11 +242,11 @@ async function fetchLotteryItems(): Promise<LotteryItem[]> {
       key: "",
       productName,
       storeName,
-      area,
-      entryPeriod,
-      lotteryDate,
-      salesPeriod,
-      sourceUrl: href,
+      area: area || "-",
+      entryPeriod: entryPeriod || "-",
+      lotteryDate: lotteryDate || "-",
+      salesPeriod: salesPeriod || "-",
+      sourceUrl: href || TARGET_URL,
     });
   });
 
