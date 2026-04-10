@@ -1,358 +1,194 @@
-import axios from "axios";
-import * as cheerio from "cheerio";
-import fs from "fs";
-import path from "path";
-import dotenv from "dotenv";
+import "dotenv/config"
+import fs from "fs"
+import path from "path"
+import dayjs from "dayjs"
 
-dotenv.config();
+import { fetchLhubLotteryItems } from "./fetchers/lhub"
+import { compareLotteryItems } from "./diff/compare"
+import { postToSlack } from "./notify/slack"
+import { resolveApplyInfoFromXPost } from "./fetchers/xResolver"
 
-type LotteryItem = {
-  key: string;
-  productName: string;
-  storeName: string;
-  area: string;
-  entryPeriod: string;
-  lotteryDate: string;
-  salesPeriod: string;
-  sourceUrl: string;
-};
+import type { LotteryItem } from "./types"
 
-const TARGET_URL = "https://laurier-hub.com/lottery/";
-const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || "";
+const dataDir = path.join(process.cwd(), "data")
+const latestFile = path.join(dataDir, "latest.json")
+const notifiedFile = path.join(dataDir, "notified.json")
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const LATEST_FILE = path.join(DATA_DIR, "latest.json");
+function load<T>(file: string, fallback: T): T {
+  if (!fs.existsSync(file)) return fallback
 
-function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+  const raw = fs.readFileSync(file, "utf8").trim()
+  if (!raw) return fallback
+
+  return JSON.parse(raw) as T
+}
+
+function save(file: string, data: unknown) {
+  fs.writeFileSync(file, JSON.stringify(data, null, 2))
+}
+
+function isOpenNow(item: LotteryItem) {
+  if (!item.entryStartDate || !item.entryEndDate) return false
+
+  const today = dayjs().format("YYYY-MM-DD")
+  return today >= item.entryStartDate && today <= item.entryEndDate
+}
+
+function isTomorrow(item: LotteryItem) {
+  const tomorrow = dayjs().add(1, "day").format("YYYY-MM-DD")
+  return item.entryEndDate === tomorrow
+}
+
+function isToday(item: LotteryItem) {
+  const today = dayjs().format("YYYY-MM-DD")
+  return item.entryEndDate === today
+}
+
+async function enrichApplyInfo(item: LotteryItem): Promise<LotteryItem> {
+  if (!item.xPostUrl) return item
+
+  const resolved = await resolveApplyInfoFromXPost(item.xPostUrl)
+
+  return {
+    ...item,
+    applyUrl: resolved.applyUrl,
+    applyLabel: resolved.applyLabel,
+    applyType: resolved.applyType
   }
 }
 
-function loadLatest(): LotteryItem[] {
-  ensureDataDir();
-
-  if (!fs.existsSync(LATEST_FILE)) {
-    return [];
+function buildApplyLines(i: LotteryItem): string[] {
+  if (i.applyType === "url" && i.applyUrl) {
+    return [`応募リンク: ${i.applyUrl}`]
   }
 
-  try {
-    const raw = fs.readFileSync(LATEST_FILE, "utf-8");
-    return JSON.parse(raw) as LotteryItem[];
-  } catch (error) {
-    console.error("[LOAD ERROR]", error);
-    return [];
-  }
-}
-
-function saveLatest(items: LotteryItem[]) {
-  ensureDataDir();
-  fs.writeFileSync(LATEST_FILE, JSON.stringify(items, null, 2), "utf-8");
-}
-
-function cleanText(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
-
-function normalizeUrl(rawUrl: string, baseUrl?: string): string {
-  try {
-    let fixed = (rawUrl || "").trim();
-
-    if (!fixed) return "";
-
-    if (fixed.startsWith("javascript:") || fixed.startsWith("#")) {
-      return "";
-    }
-
-    if (baseUrl) {
-      fixed = new URL(fixed, baseUrl).toString();
-    }
-
-    if (!/^https?:\/\//i.test(fixed)) {
-      fixed = "https://" + fixed;
-    }
-
-    const u = new URL(fixed);
-
-    u.hostname = u.hostname.replace(/^ww\./i, "www.");
-    u.hostname = u.hostname.replace(/^w\./i, "www.");
-
-    if (!u.hostname.startsWith("www.") && !u.hostname.includes("x.com")) {
-      u.hostname = "www." + u.hostname;
-    }
-
-    return u.toString();
-  } catch (error) {
-    console.error("[NORMALIZE URL ERROR]", rawUrl, error);
-    return rawUrl;
-  }
-}
-
-async function isAccessibleUrl(url: string): Promise<boolean> {
-  try {
-    const headRes = await axios.head(url, {
-      timeout: 10000,
-      maxRedirects: 5,
-      validateStatus: () => true,
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-      },
-    });
-
-    if (headRes.status >= 200 && headRes.status < 400) {
-      return true;
-    }
-
-    const getRes = await axios.get(url, {
-      timeout: 10000,
-      maxRedirects: 5,
-      validateStatus: () => true,
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-      },
-    });
-
-    return getRes.status >= 200 && getRes.status < 400;
-  } catch {
-    return false;
-  }
-}
-
-async function ensureAccessibleUrl(rawUrl: string, baseUrl?: string): Promise<string> {
-  const normalized = normalizeUrl(rawUrl, baseUrl);
-
-  if (!normalized) return "";
-
-  if (await isAccessibleUrl(normalized)) {
-    return normalized;
+  if (i.applyType === "store" && i.applyLabel) {
+    return [`応募方法: ${i.applyLabel}`]
   }
 
-  try {
-    const u = new URL(normalized);
-
-    if (u.hostname.startsWith("www.")) {
-      const noWww = new URL(normalized);
-      noWww.hostname = noWww.hostname.replace(/^www\./, "");
-      const noWwwUrl = noWww.toString();
-
-      if (await isAccessibleUrl(noWwwUrl)) {
-        return noWwwUrl;
-      }
-    } else if (!u.hostname.includes("x.com")) {
-      const withWww = new URL(normalized);
-      withWww.hostname = "www." + withWww.hostname;
-      const withWwwUrl = withWww.toString();
-
-      if (await isAccessibleUrl(withWwwUrl)) {
-        return withWwwUrl;
-      }
-    }
-  } catch (error) {
-    console.error("[ACCESSIBLE URL ERROR]", rawUrl, error);
+  if (i.applyLabel) {
+    return [`応募方法: ${i.applyLabel}`]
   }
 
-  return normalized;
-}
-
-function buildKey(item: Omit<LotteryItem, "key">): string {
-  return [
-    item.productName,
-    item.storeName,
-    item.area,
-    item.entryPeriod,
-    item.lotteryDate,
-    item.salesPeriod,
-    item.sourceUrl,
-  ].join("|");
-}
-
-function extractProductAndStoreFromFirstTd(firstTdText: string): {
-  productName: string;
-  storeName: string;
-} {
-  const lines = firstTdText
-    .split("\n")
-    .map((line) => cleanText(line))
-    .filter(Boolean)
-    .filter((line) => !["New", "NEW", "当選", "落選"].includes(line));
-
-  const productName = lines[0] || "";
-  const storeName = lines[1] || "";
-
-  return { productName, storeName };
-}
-
-function pickBestLink($row: cheerio.Cheerio<any>, baseUrl: string): string {
-  let href = "";
-
-  $row.find("a[href]").each((_, a) => {
-    const candidate = cleanText($row.find(a).attr("href") || "");
-    if (!candidate) return;
-
-    if (
-      candidate.includes("x.com/laurier_news/") ||
-      candidate.includes("twitter.com/laurier_news/")
-    ) {
-      href = candidate;
-      return false;
-    }
-
-    if (!href) {
-      href = candidate;
-    }
-  });
-
-  return normalizeUrl(href, baseUrl);
-}
-
-async function fetchLotteryItems(): Promise<LotteryItem[]> {
-  console.log("[FETCH] open:", TARGET_URL);
-
-  const res = await axios.get(TARGET_URL, {
-    timeout: 20000,
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-    },
-  });
-
-  const $ = cheerio.load(res.data);
-  const items: LotteryItem[] = [];
-
-  $("table tr").each((_, tr) => {
-    const $tr = $(tr);
-    const tds = $tr.find("td");
-
-    if (tds.length < 5) return;
-
-    const firstTdText = $(tds[0]).text();
-    const { productName, storeName } = extractProductAndStoreFromFirstTd(firstTdText);
-
-    const area = cleanText($(tds[1]).text());
-    const entryPeriod = cleanText($(tds[2]).text());
-    const lotteryDate = cleanText($(tds[3]).text());
-    const salesPeriod = cleanText($(tds[4]).text());
-    const href = pickBestLink($tr, TARGET_URL);
-
-    if (!productName || !storeName) return;
-
-    items.push({
-      key: "",
-      productName,
-      storeName,
-      area: area || "-",
-      entryPeriod: entryPeriod || "-",
-      lotteryDate: lotteryDate || "-",
-      salesPeriod: salesPeriod || "-",
-      sourceUrl: href || TARGET_URL,
-    });
-  });
-
-  console.log("[FETCH] raw item count:", items.length);
-
-  const normalizedItems: LotteryItem[] = [];
-  const seen = new Set<string>();
-
-  for (const item of items) {
-    const safeUrl = await ensureAccessibleUrl(item.sourceUrl, TARGET_URL);
-
-    const completed: Omit<LotteryItem, "key"> = {
-      ...item,
-      sourceUrl: safeUrl || item.sourceUrl || TARGET_URL,
-    };
-
-    const key = buildKey(completed);
-
-    if (seen.has(key)) continue;
-    seen.add(key);
-
-    normalizedItems.push({
-      ...completed,
-      key,
-    });
+  if (i.xPostUrl) {
+    return [`参考X: ${i.xPostUrl}`]
   }
 
-  console.log("[FETCH] normalized item count:", normalizedItems.length);
-
-  return normalizedItems;
+  return []
 }
 
-function diffItems(oldItems: LotteryItem[], newItems: LotteryItem[]) {
-  const oldMap = new Map(oldItems.map((item) => [item.key, item]));
-  const added: LotteryItem[] = [];
-
-  for (const item of newItems) {
-    if (!oldMap.has(item.key)) {
-      added.push(item);
-    }
-  }
-
-  return { added };
-}
-
-function buildSlackText(item: LotteryItem): string {
+function msgNew(i: LotteryItem) {
   return [
     "【新規抽選】",
-    `商品: ${item.productName || "-"}`,
-    `店舗: ${item.storeName || "-"}`,
-    `エリア: ${item.area || "-"}`,
-    `応募期間: ${item.entryPeriod || "-"}`,
-    `抽選日: ${item.lotteryDate || "-"}`,
-    `販売期間: ${item.salesPeriod || "-"}`,
-    `応募リンク: ${item.sourceUrl || "-"}`,
-  ].join("\n");
+    `商品: ${i.productName}`,
+    `店舗: ${i.storeName}`,
+    `エリア: ${i.area}`,
+    `応募期間: ${i.entryPeriod}`,
+    `抽選日: ${i.lotteryDate}`,
+    `販売期間: ${i.salesPeriod}`,
+    ...buildApplyLines(i)
+  ].join("\n")
 }
 
-async function postToSlack(text: string) {
-  if (!SLACK_WEBHOOK_URL) {
-    console.log("[SKIP] SLACK_WEBHOOK_URL is empty");
-    return;
-  }
+function msgUpdate(
+  before: LotteryItem,
+  after: LotteryItem,
+  changedFields: string[]
+) {
+  return [
+    "【抽選情報更新】",
+    `商品: ${after.productName}`,
+    `店舗: ${after.storeName}`,
+    `変更項目: ${changedFields.join(", ")}`,
+    "",
+    `応募期間: ${before.entryPeriod} → ${after.entryPeriod}`,
+    `抽選日: ${before.lotteryDate} → ${after.lotteryDate}`,
+    `販売期間: ${before.salesPeriod} → ${after.salesPeriod}`,
+    ...buildApplyLines(after)
+  ].join("\n")
+}
 
-  await axios.post(
-    SLACK_WEBHOOK_URL,
-    { text },
-    {
-      timeout: 15000,
-      headers: {
-        "Content-Type": "application/json",
-      },
-    }
-  );
+function msgToday(i: LotteryItem) {
+  return [
+    "【本日締切】",
+    `商品: ${i.productName}`,
+    `店舗: ${i.storeName}`,
+    `応募締切: 本日 (${i.entryEndDate})`,
+    `応募期間: ${i.entryPeriod}`,
+    ...buildApplyLines(i)
+  ].join("\n")
+}
+
+function msgTomorrow(i: LotteryItem) {
+  return [
+    "【締切明日】",
+    `商品: ${i.productName}`,
+    `店舗: ${i.storeName}`,
+    `応募締切: 明日 (${i.entryEndDate})`,
+    `応募期間: ${i.entryPeriod}`,
+    ...buildApplyLines(i)
+  ].join("\n")
 }
 
 async function main() {
-  try {
-    const oldItems = loadLatest();
-    const newItems = await fetchLotteryItems();
+  const previous: LotteryItem[] = load(latestFile, [])
+  const notified: Record<string, boolean> = load(notifiedFile, {})
 
-    const { added } = diffItems(oldItems, newItems);
+  const current = await fetchLhubLotteryItems()
+  const diff = compareLotteryItems(previous, current)
 
-    console.log("[DIFF] added:", added.length);
+  for (const item of diff.added) {
+    if (!isOpenNow(item)) continue
 
-    for (const item of added) {
-      const message = buildSlackText(item);
-      console.log("[POST]", message);
-      await postToSlack(message);
-    }
+    const key = `new:${item.key}`
+    if (notified[key]) continue
 
-    saveLatest(newItems);
-    console.log("[DONE] latest.json updated");
-  } catch (error) {
-    console.error("[FATAL ERROR]", error);
+    const enriched = await enrichApplyInfo(item)
+    await postToSlack(msgNew(enriched))
+    notified[key] = true
+  }
 
-    if (SLACK_WEBHOOK_URL) {
-      try {
-        await postToSlack(`【lottery-monitor エラー】\n${String(error)}`);
-      } catch (slackError) {
-        console.error("[SLACK ERROR]", slackError);
+  for (const u of diff.updated) {
+    if (!isOpenNow(u.after)) continue
+
+    const key = `update:${u.after.key}:${u.after.entryPeriod}`
+    if (notified[key]) continue
+
+    const enriched = await enrichApplyInfo(u.after)
+    await postToSlack(msgUpdate(u.before, enriched, u.changedFields))
+    notified[key] = true
+  }
+
+  for (const item of current) {
+    if (isTomorrow(item)) {
+      const key = `tomorrow:${item.key}:${item.entryEndDate}`
+
+      if (!notified[key]) {
+        const enriched = await enrichApplyInfo(item)
+        await postToSlack(msgTomorrow(enriched))
+        notified[key] = true
       }
     }
 
-    process.exit(1);
+    if (isToday(item)) {
+      const today = dayjs().format("YYYY-MM-DD")
+      const key = `today:${item.key}:${today}`
+
+      if (!notified[key]) {
+        const enriched = await enrichApplyInfo(item)
+        await postToSlack(msgToday(enriched))
+        notified[key] = true
+      }
+    }
   }
+
+  save(latestFile, current)
+  save(notifiedFile, notified)
+
+  console.log("monitor complete")
 }
 
-main();
+main().catch((err) => {
+  console.error(err)
+  process.exit(1)
+})
