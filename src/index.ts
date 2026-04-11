@@ -1,210 +1,194 @@
-import "dotenv/config";
-import fs from "fs";
-import path from "path";
-import axios from "axios";
-import dayjs from "dayjs";
-import { compareLotteryItems } from "./diff/compare";
-import { fetchLhubItems, filterItemsInPeriod } from "./fetchers/lhub";
-import { LotteryItem } from "./types";
+import "dotenv/config"
+import fs from "fs"
+import path from "path"
+import dayjs from "dayjs"
 
-const DATA_DIR = path.resolve(process.cwd(), "data");
-const LATEST_JSON_PATH = path.join(DATA_DIR, "latest.json");
+import { fetchLhubLotteryItems } from "./fetchers/lhub"
+import { compareLotteryItems } from "./diff/compare"
+import { postToSlack } from "./notify/slack"
+import { resolveApplyInfoFromXPost } from "./fetchers/xResolver"
 
-function ensureDataDir(): void {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
+import type { LotteryItem } from "./types"
+
+const dataDir = path.join(process.cwd(), "data")
+const latestFile = path.join(dataDir, "latest.json")
+const notifiedFile = path.join(dataDir, "notified.json")
+
+function load<T>(file: string, fallback: T): T {
+  if (!fs.existsSync(file)) return fallback
+
+  const raw = fs.readFileSync(file, "utf8").trim()
+  if (!raw) return fallback
+
+  return JSON.parse(raw) as T
 }
 
-function loadLatestItems(): LotteryItem[] | null {
-  if (!fs.existsSync(LATEST_JSON_PATH)) return null;
-
-  const raw = fs.readFileSync(LATEST_JSON_PATH, "utf-8");
-  const parsed = JSON.parse(raw) as { items?: LotteryItem[] } | LotteryItem[];
-
-  if (Array.isArray(parsed)) {
-    return parsed;
-  }
-
-  if (Array.isArray(parsed.items)) {
-    return parsed.items;
-  }
-
-  return null;
+function save(file: string, data: unknown) {
+  fs.writeFileSync(file, JSON.stringify(data, null, 2))
 }
 
-function saveLatestItems(items: LotteryItem[]): void {
-  ensureDataDir();
+function isOpenNow(item: LotteryItem) {
+  if (!item.entryStartDate || !item.entryEndDate) return false
 
-  const payload = {
-    updatedAt: new Date().toISOString(),
-    count: items.length,
-    items,
-  };
-
-  fs.writeFileSync(LATEST_JSON_PATH, JSON.stringify(payload, null, 2), "utf-8");
+  const today = dayjs().format("YYYY-MM-DD")
+  return today >= item.entryStartDate && today <= item.entryEndDate
 }
 
-function normalizeItemForSlack(item: LotteryItem): LotteryItem {
+function isTomorrow(item: LotteryItem) {
+  const tomorrow = dayjs().add(1, "day").format("YYYY-MM-DD")
+  return item.entryEndDate === tomorrow
+}
+
+function isToday(item: LotteryItem) {
+  const today = dayjs().format("YYYY-MM-DD")
+  return item.entryEndDate === today
+}
+
+async function enrichApplyInfo(item: LotteryItem): Promise<LotteryItem> {
+  if (!item.xPostUrl) return item
+
+  const resolved = await resolveApplyInfoFromXPost(item.xPostUrl)
+
   return {
     ...item,
-    url: item.url || item.sourceUrl || "https://laurier-hub.com/lottery/",
-    sourceUrl: item.sourceUrl || "https://laurier-hub.com/lottery/",
-  };
+    applyUrl: resolved.applyUrl,
+    applyLabel: resolved.applyLabel,
+    applyType: resolved.applyType
+  }
 }
 
-function formatAdded(item: LotteryItem): string {
-  const safe = normalizeItemForSlack(item);
+function buildApplyLines(i: LotteryItem): string[] {
+  if (i.applyType === "url" && i.applyUrl) {
+    return [`応募リンク: ${i.applyUrl}`]
+  }
 
+  if (i.applyType === "store" && i.applyLabel) {
+    return [`応募方法: ${i.applyLabel}`]
+  }
+
+  if (i.applyLabel) {
+    return [`応募方法: ${i.applyLabel}`]
+  }
+
+  if (i.xPostUrl) {
+    return [`参考X: ${i.xPostUrl}`]
+  }
+
+  return []
+}
+
+function msgNew(i: LotteryItem) {
   return [
     "【新規抽選】",
-    `商品: ${safe.productName}`,
-    `店舗: ${safe.storeName}`,
-    `エリア: ${safe.area || "-"}`,
-    `応募期間: ${safe.entryPeriod}`,
-    `抽選日: ${safe.lotteryDate || "-"}`,
-    `販売期間: ${safe.salePeriod || "-"}`,
-    `リンク: ${safe.url}`,
-  ].join("\n");
+    `商品: ${i.productName}`,
+    `店舗: ${i.storeName}`,
+    `エリア: ${i.area}`,
+    `応募期間: ${i.entryPeriod}`,
+    `抽選日: ${i.lotteryDate}`,
+    `販売期間: ${i.salesPeriod}`,
+    ...buildApplyLines(i)
+  ].join("\n")
 }
 
-function formatChanged(
+function msgUpdate(
   before: LotteryItem,
   after: LotteryItem,
   changedFields: string[]
-): string {
-  const safe = normalizeItemForSlack(after);
-
-  const labelMap: Record<string, string> = {
-    productName: "商品",
-    storeName: "店舗",
-    area: "エリア",
-    entryPeriod: "応募期間",
-    entryStart: "応募開始",
-    entryEnd: "応募終了",
-    lotteryDate: "抽選日",
-    salePeriod: "販売期間",
-    sourceUrl: "取得元URL",
-    url: "リンク",
-  };
-
-  const lines: string[] = [
-    "【内容変更】",
-    `商品: ${safe.productName}`,
-    `店舗: ${safe.storeName}`,
-    `エリア: ${safe.area || "-"}`,
-  ];
-
-  for (const field of changedFields) {
-    const label = labelMap[field] || field;
-    const beforeValue = String((before as Record<string, unknown>)[field] ?? "").trim() || "-";
-    const afterValue = String((after as Record<string, unknown>)[field] ?? "").trim() || "-";
-    lines.push(`${label}: ${beforeValue} => ${afterValue}`);
-  }
-
-  lines.push(`リンク: ${safe.url}`);
-
-  return lines.join("\n");
-}
-
-function formatRemoved(item: LotteryItem): string {
-  const safe = normalizeItemForSlack(item);
-
+) {
   return [
-    "【掲載終了】",
-    `商品: ${safe.productName}`,
-    `店舗: ${safe.storeName}`,
-    `エリア: ${safe.area || "-"}`,
-    `応募期間: ${safe.entryPeriod}`,
-    `リンク: ${safe.url || safe.sourceUrl}`,
-  ].join("\n");
+    "【抽選情報更新】",
+    `商品: ${after.productName}`,
+    `店舗: ${after.storeName}`,
+    `変更項目: ${changedFields.join(", ")}`,
+    "",
+    `応募期間: ${before.entryPeriod} → ${after.entryPeriod}`,
+    `抽選日: ${before.lotteryDate} → ${after.lotteryDate}`,
+    `販売期間: ${before.salesPeriod} → ${after.salesPeriod}`,
+    ...buildApplyLines(after)
+  ].join("\n")
 }
 
-async function postSlackMessage(text: string): Promise<void> {
-  const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+function msgToday(i: LotteryItem) {
+  return [
+    "【本日締切】",
+    `商品: ${i.productName}`,
+    `店舗: ${i.storeName}`,
+    `応募締切: 本日 (${i.entryEndDate})`,
+    `応募期間: ${i.entryPeriod}`,
+    ...buildApplyLines(i)
+  ].join("\n")
+}
 
-  if (!webhookUrl) {
-    console.warn("[Slack] SLACK_WEBHOOK_URL is not set. skip.");
-    return;
+function msgTomorrow(i: LotteryItem) {
+  return [
+    "【締切明日】",
+    `商品: ${i.productName}`,
+    `店舗: ${i.storeName}`,
+    `応募締切: 明日 (${i.entryEndDate})`,
+    `応募期間: ${i.entryPeriod}`,
+    ...buildApplyLines(i)
+  ].join("\n")
+}
+
+async function main() {
+  const previous: LotteryItem[] = load(latestFile, [])
+  const notified: Record<string, boolean> = load(notifiedFile, {})
+
+  const current = await fetchLhubLotteryItems()
+  const diff = compareLotteryItems(previous, current)
+
+  for (const item of diff.added) {
+    if (!isOpenNow(item)) continue
+
+    const key = `new:${item.key}`
+    if (notified[key]) continue
+
+    const enriched = await enrichApplyInfo(item)
+    await postToSlack(msgNew(enriched))
+    notified[key] = true
   }
 
-  await axios.post(
-    webhookUrl,
-    {
-      text,
-    },
-    {
-      timeout: 15000,
-      headers: {
-        "Content-Type": "application/json",
-      },
+  for (const u of diff.updated) {
+    if (!isOpenNow(u.after)) continue
+
+    const key = `update:${u.after.key}:${u.after.entryPeriod}`
+    if (notified[key]) continue
+
+    const enriched = await enrichApplyInfo(u.after)
+    await postToSlack(msgUpdate(u.before, enriched, u.changedFields))
+    notified[key] = true
+  }
+
+  for (const item of current) {
+    if (isTomorrow(item)) {
+      const key = `tomorrow:${item.key}:${item.entryEndDate}`
+
+      if (!notified[key]) {
+        const enriched = await enrichApplyInfo(item)
+        await postToSlack(msgTomorrow(enriched))
+        notified[key] = true
+      }
     }
-  );
+
+    if (isToday(item)) {
+      const today = dayjs().format("YYYY-MM-DD")
+      const key = `today:${item.key}:${today}`
+
+      if (!notified[key]) {
+        const enriched = await enrichApplyInfo(item)
+        await postToSlack(msgToday(enriched))
+        notified[key] = true
+      }
+    }
+  }
+
+  save(latestFile, current)
+  save(notifiedFile, notified)
+
+  console.log("monitor complete")
 }
 
-async function postSlackDiffs(params: {
-  added: LotteryItem[];
-  changed: Array<{ before: LotteryItem; after: LotteryItem; changedFields: string[] }>;
-  removed: LotteryItem[];
-}): Promise<void> {
-  const { added, changed, removed } = params;
-
-  for (const item of added) {
-    await postSlackMessage(formatAdded(item));
-  }
-
-  for (const diff of changed) {
-    await postSlackMessage(formatChanged(diff.before, diff.after, diff.changedFields));
-  }
-
-  for (const item of removed) {
-    await postSlackMessage(formatRemoved(item));
-  }
-}
-
-async function main(): Promise<void> {
-  const now = dayjs();
-
-  const allItems = await fetchLhubItems();
-  console.log(`[LHUB] rows(all)=${allItems.length}`);
-
-  const inPeriodItems = filterItemsInPeriod(allItems, now);
-  console.log(`[LHUB] rows(in-period)=${inPeriodItems.length}`);
-
-  // 今回は「期間内のものだけSlack通知できればよい」ので、
-  // X解析は使わず、そのまま期間内データだけで差分監視する。
-  const currentItems = inPeriodItems.map((item) => ({
-    ...item,
-    url: item.url || item.sourceUrl || "https://laurier-hub.com/lottery/",
-    sourceUrl: item.sourceUrl || "https://laurier-hub.com/lottery/",
-  }));
-
-  const prevItems = loadLatestItems();
-
-  if (!prevItems) {
-    saveLatestItems(currentItems);
-    console.log(`[STATE] first seed saved: ${currentItems.length}`);
-    return;
-  }
-
-  const diff = compareLotteryItems(prevItems, currentItems);
-
-  console.log(
-    `[DIFF] added=${diff.added.length} changed=${diff.changed.length} removed=${diff.removed.length}`
-  );
-
-  if (diff.added.length === 0 && diff.changed.length === 0 && diff.removed.length === 0) {
-    saveLatestItems(currentItems);
-    console.log("[DIFF] no changes");
-    return;
-  }
-
-  await postSlackDiffs(diff);
-  saveLatestItems(currentItems);
-  console.log("[STATE] latest.json updated");
-}
-
-main().catch((error) => {
-  console.error("[ERROR]", error);
-  process.exit(1);
-});
+main().catch((err) => {
+  console.error(err)
+  process.exit(1)
+})

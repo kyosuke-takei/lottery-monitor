@@ -1,87 +1,46 @@
-import { DiffResult, LotteryItem } from "../types";
+import type { LotteryItem, DiffResult } from "../types"
 
-function normalize(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  return String(value).trim().replace(/\s+/g, " ");
-}
-
-function buildKey(item: LotteryItem): string {
-  return item.itemId;
-}
-
-function isSameItem(a: LotteryItem, b: LotteryItem): boolean {
-  return (
-    normalize(a.productName) === normalize(b.productName) &&
-    normalize(a.storeName) === normalize(b.storeName) &&
-    normalize(a.area) === normalize(b.area) &&
-    normalize(a.entryPeriod) === normalize(b.entryPeriod) &&
-    normalize(a.entryStart) === normalize(b.entryStart) &&
-    normalize(a.entryEnd) === normalize(b.entryEnd) &&
-    normalize(a.lotteryDate) === normalize(b.lotteryDate) &&
-    normalize(a.salePeriod) === normalize(b.salePeriod) &&
-    normalize(a.url) === normalize(b.url) &&
-    normalize(a.applyType) === normalize(b.applyType)
-  );
-}
-
-function getChangedFields(a: LotteryItem, b: LotteryItem): Array<keyof LotteryItem> {
-  const fields: Array<keyof LotteryItem> = [
-    "productName",
-    "storeName",
-    "area",
+function getChangedFields(before: LotteryItem, after: LotteryItem) {
+  const fields: (keyof LotteryItem)[] = [
     "entryPeriod",
-    "entryStart",
-    "entryEnd",
     "lotteryDate",
-    "salePeriod",
-    "url",
-    "applyType",
-  ];
+    "salesPeriod",
+    "xPostUrl",
+    "applyUrl",
+    "applyLabel",
+    "applyType"
+  ]
 
-  return fields.filter((field) => normalize(a[field]) !== normalize(b[field]));
+  return fields.filter(f => before[f] !== after[f]).map(String)
 }
 
 export function compareLotteryItems(
-  previousItems: LotteryItem[],
-  currentItems: LotteryItem[],
+  previous: LotteryItem[],
+  current: LotteryItem[]
 ): DiffResult {
-  const previousMap = new Map<string, LotteryItem>();
-  const currentMap = new Map<string, LotteryItem>();
+  const previousMap = new Map(previous.map(i => [i.key, i]))
 
-  for (const item of previousItems) {
-    previousMap.set(buildKey(item), item);
-  }
+  const added: LotteryItem[] = []
+  const updated: DiffResult["updated"] = []
 
-  for (const item of currentItems) {
-    currentMap.set(buildKey(item), item);
-  }
+  for (const item of current) {
+    const prev = previousMap.get(item.key)
 
-  const added: LotteryItem[] = [];
-  const removed: LotteryItem[] = [];
-  const changed: DiffResult["changed"] = [];
-
-  for (const [key, currentItem] of currentMap.entries()) {
-    const previousItem = previousMap.get(key);
-
-    if (!previousItem) {
-      added.push(currentItem);
-      continue;
+    if (!prev) {
+      added.push(item)
+      continue
     }
 
-    if (!isSameItem(previousItem, currentItem)) {
-      changed.push({
-        before: previousItem,
-        after: currentItem,
-        changedFields: getChangedFields(previousItem, currentItem),
-      });
+    const changedFields = getChangedFields(prev, item)
+
+    if (changedFields.length > 0) {
+      updated.push({
+        before: prev,
+        after: item,
+        changedFields
+      })
     }
   }
 
-  for (const [key, previousItem] of previousMap.entries()) {
-    if (!currentMap.has(key)) {
-      removed.push(previousItem);
-    }
-  }
-
-  return { added, removed, changed };
+  return { added, updated }
 }
