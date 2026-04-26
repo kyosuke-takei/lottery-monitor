@@ -246,8 +246,40 @@ async function extractExternalUrlsFromArticle(articleEl: Locator, context: Brows
   }
 }
 
+function findUrlForProduct(text: string, productName: string, externalUrls: string[]): string | null {
+  if (!productName || externalUrls.length === 0) return null
+
+  // 商品名が単独行として登場する位置を探す（タイトル行のスラッシュ区切りは除外）
+  const escaped = productName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const standaloneRe = new RegExp(`(?:^|\n)${escaped}\n`)
+  const match = standaloneRe.exec(text)
+  if (!match) return null
+
+  const nameStart = match.index + match[0].indexOf(productName)
+  const afterProduct = text.slice(nameStart + productName.length)
+
+  const urlInfo = detectUrl(afterProduct)
+  if (!urlInfo) return null
+
+  // テキストURLのパス部分でexternalUrlsを照合
+  try {
+    const textPath = new URL(urlInfo.applyUrl).pathname
+    const matched = externalUrls.find((u) => u.includes(textPath))
+    if (matched) return matched
+  } catch {
+    const pathMatch = urlInfo.applyUrl.match(/\/[^\s?#]+/)
+    if (pathMatch) {
+      const matched = externalUrls.find((u) => u.includes(pathMatch[0]))
+      if (matched) return matched
+    }
+  }
+
+  return null
+}
+
 export async function resolveApplyInfoFromXPost(
-  xPostUrl: string
+  xPostUrl: string,
+  productName?: string
 ): Promise<ResolvedApplyInfo> {
   if (!xPostUrl || !/^https?:\/\/(x\.com|twitter\.com)\//i.test(xPostUrl)) {
     console.log("[X] invalid xPostUrl:", xPostUrl)
@@ -306,23 +338,25 @@ export async function resolveApplyInfoFromXPost(
 
     const picked = pickBestApplyCandidate(candidates)
 
-    // URLが取れた場合はhref経由の正確なURLを優先
-    if (picked?.applyType === "url" && externalUrls.length > 0) {
-      const url = externalUrls[0]
-      console.log("[X] replacing text-url with href-resolved url:", url)
-      return { applyUrl: url, applyLabel: url, applyType: "url" }
+    // 商品名でテキストURLをexternalUrlsに照合して正確なURLを選択
+    if (externalUrls.length > 0) {
+      const matchedUrl = findUrlForProduct(text, productName ?? "", externalUrls)
+      if (matchedUrl) {
+        console.log("[X] product-matched url:", matchedUrl)
+        return { applyUrl: matchedUrl, applyLabel: matchedUrl, applyType: "url" }
+      }
+
+      // 商品名で絞り込めなかった場合は最初のURLを使用
+      if (picked?.applyType === "url" || !picked) {
+        const url = externalUrls[0]
+        console.log("[X] using first href-resolved url:", url)
+        return { applyUrl: url, applyLabel: url, applyType: "url" }
+      }
     }
 
     if (picked) {
       console.log("[X] picked from candidates:", picked)
       return picked
-    }
-
-    // href経由のURLがあればそれを使用
-    if (externalUrls.length > 0) {
-      const url = externalUrls[0]
-      console.log("[X] using href-resolved url:", url)
-      return { applyUrl: url, applyLabel: url, applyType: "url" }
     }
 
     // フォールバック1: 全文からURL

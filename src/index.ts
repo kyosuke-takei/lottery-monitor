@@ -47,7 +47,7 @@ function isToday(item: LotteryItem) {
 async function enrichApplyInfo(item: LotteryItem): Promise<LotteryItem> {
   if (!item.xPostUrl) return item
 
-  const resolved = await resolveApplyInfoFromXPost(item.xPostUrl)
+  const resolved = await resolveApplyInfoFromXPost(item.xPostUrl, item.productName)
 
   return {
     ...item,
