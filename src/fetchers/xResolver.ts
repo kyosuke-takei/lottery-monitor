@@ -1,5 +1,4 @@
-import axios from "axios"
-import { chromium, type Locator } from "playwright"
+import { chromium, type BrowserContext, type Locator } from "playwright"
 
 export type ResolvedApplyInfo = {
   applyUrl: string
@@ -199,49 +198,50 @@ function pickBestApplyCandidate(
   return null
 }
 
-async function resolveRedirect(url: string): Promise<string> {
-  let current = url
+async function resolveTcoUrl(context: BrowserContext, tcoUrl: string): Promise<string> {
+  const newPage = await context.newPage()
+  let capturedUrl = tcoUrl
+
   try {
-    for (let i = 0; i < 10; i++) {
-      const response = await axios.get(current, {
-        maxRedirects: 0,
-        validateStatus: () => true,
-        timeout: 10000,
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
-        }
-      })
-      const location = response.headers["location"] as string | undefined
-      if (response.status >= 300 && response.status < 400 && location) {
-        current = location.startsWith("/")
-          ? new URL(location, current).href
-          : location
+    // t.co以外へのナビゲーションをキャプチャし即中断（ページロード不要）
+    await newPage.route("**", async (route) => {
+      const url = route.request().url()
+      if (!url.startsWith("https://t.co/")) {
+        capturedUrl = url
+        await route.abort()
       } else {
-        break
+        await route.continue()
       }
-    }
-  } catch {
-    // return whatever we have
+    })
+
+    await newPage.goto(tcoUrl, { timeout: 15000 }).catch(() => {})
+    console.log("[X] resolveTco:", tcoUrl, "→", capturedUrl)
+    return capturedUrl
+  } catch (e) {
+    console.error("[X] resolveTco error:", tcoUrl, e)
+    return tcoUrl
+  } finally {
+    await newPage.close().catch(() => {})
   }
-  return current
 }
 
-async function extractExternalUrlsFromArticle(articleEl: Locator): Promise<string[]> {
+async function extractExternalUrlsFromArticle(articleEl: Locator, context: BrowserContext): Promise<string[]> {
   try {
     const hrefs: string[] = await articleEl
       .locator('a[href^="https://t.co/"]')
       .evaluateAll((els) => els.map((el) => (el as HTMLAnchorElement).href))
+    console.log("[X] t.co hrefs:", hrefs)
 
     const results: string[] = []
     for (const href of hrefs) {
-      const finalUrl = await resolveRedirect(href)
+      const finalUrl = await resolveTcoUrl(context, href)
       if (!/^https?:\/\/(x\.com|twitter\.com|t\.co)/i.test(finalUrl)) {
         results.push(finalUrl)
       }
     }
     return results
-  } catch {
+  } catch (e) {
+    console.error("[X] extractExternalUrls error:", e)
     return []
   }
 }
@@ -259,7 +259,8 @@ export async function resolveApplyInfoFromXPost(
   }
 
   const browser = await chromium.launch({ headless: true })
-  const page = await browser.newPage()
+  const context = await browser.newContext()
+  const page = await context.newPage()
 
   try {
     console.log("[X] open:", xPostUrl)
@@ -297,7 +298,7 @@ export async function resolveApplyInfoFromXPost(
     console.log("[X] selected text preview:", text.slice(0, 1200))
 
     // href属性のt.co URLをリダイレクト解決して実URLを取得（wwwなど正確なURLを得るため）
-    const externalUrls = await extractExternalUrlsFromArticle(articles.nth(targetIndex))
+    const externalUrls = await extractExternalUrlsFromArticle(articles.nth(targetIndex), context)
     console.log("[X] external urls from hrefs:", externalUrls)
 
     const candidates = extractApplyCandidates(text)
@@ -354,6 +355,7 @@ export async function resolveApplyInfoFromXPost(
     }
   } finally {
     await page.close().catch(() => {})
+    await context.close().catch(() => {})
     await browser.close().catch(() => {})
   }
 }
