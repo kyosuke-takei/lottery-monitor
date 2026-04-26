@@ -1,4 +1,5 @@
-import { chromium } from "playwright"
+import axios from "axios"
+import { chromium, type Locator } from "playwright"
 
 export type ResolvedApplyInfo = {
   applyUrl: string
@@ -198,6 +199,53 @@ function pickBestApplyCandidate(
   return null
 }
 
+async function resolveRedirect(url: string): Promise<string> {
+  let current = url
+  try {
+    for (let i = 0; i < 10; i++) {
+      const response = await axios.get(current, {
+        maxRedirects: 0,
+        validateStatus: () => true,
+        timeout: 10000,
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+        }
+      })
+      const location = response.headers["location"] as string | undefined
+      if (response.status >= 300 && response.status < 400 && location) {
+        current = location.startsWith("/")
+          ? new URL(location, current).href
+          : location
+      } else {
+        break
+      }
+    }
+  } catch {
+    // return whatever we have
+  }
+  return current
+}
+
+async function extractExternalUrlsFromArticle(articleEl: Locator): Promise<string[]> {
+  try {
+    const hrefs: string[] = await articleEl
+      .locator('a[href^="https://t.co/"]')
+      .evaluateAll((els) => els.map((el) => (el as HTMLAnchorElement).href))
+
+    const results: string[] = []
+    for (const href of hrefs) {
+      const finalUrl = await resolveRedirect(href)
+      if (!/^https?:\/\/(x\.com|twitter\.com|t\.co)/i.test(finalUrl)) {
+        results.push(finalUrl)
+      }
+    }
+    return results
+  } catch {
+    return []
+  }
+}
+
 export async function resolveApplyInfoFromXPost(
   xPostUrl: string
 ): Promise<ResolvedApplyInfo> {
@@ -228,6 +276,7 @@ export async function resolveApplyInfoFromXPost(
     console.log("[X] article count:", count)
 
     let text = ""
+    let targetIndex = 0
 
     for (let i = 0; i < Math.min(count, 3); i++) {
       const t = normalizeText(await articles.nth(i).innerText())
@@ -235,23 +284,44 @@ export async function resolveApplyInfoFromXPost(
 
       if (/応募[:：]/.test(t) || /期間[:：]/.test(t) || /当選[:：]/.test(t)) {
         text = t
+        targetIndex = i
         break
       }
     }
 
     if (!text && count > 0) {
       text = normalizeText(await articles.first().innerText())
+      targetIndex = 0
     }
 
     console.log("[X] selected text preview:", text.slice(0, 1200))
+
+    // href属性のt.co URLをリダイレクト解決して実URLを取得（wwwなど正確なURLを得るため）
+    const externalUrls = await extractExternalUrlsFromArticle(articles.nth(targetIndex))
+    console.log("[X] external urls from hrefs:", externalUrls)
 
     const candidates = extractApplyCandidates(text)
     console.log("[X] apply candidates:", candidates)
 
     const picked = pickBestApplyCandidate(candidates)
+
+    // URLが取れた場合はhref経由の正確なURLを優先
+    if (picked?.applyType === "url" && externalUrls.length > 0) {
+      const url = externalUrls[0]
+      console.log("[X] replacing text-url with href-resolved url:", url)
+      return { applyUrl: url, applyLabel: url, applyType: "url" }
+    }
+
     if (picked) {
       console.log("[X] picked from candidates:", picked)
       return picked
+    }
+
+    // href経由のURLがあればそれを使用
+    if (externalUrls.length > 0) {
+      const url = externalUrls[0]
+      console.log("[X] using href-resolved url:", url)
+      return { applyUrl: url, applyLabel: url, applyType: "url" }
     }
 
     // フォールバック1: 全文からURL
