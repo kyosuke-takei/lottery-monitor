@@ -1,5 +1,37 @@
 [
   {
+    "key": "アビスアイ|平和堂|全国規模|5/11 〜 5/12",
+    "productName": "アビスアイ",
+    "storeName": "平和堂",
+    "area": "全国規模",
+    "entryPeriod": "5/11 〜 5/12",
+    "lotteryDate": "5/21",
+    "salesPeriod": "5/22 〜 5/24",
+    "entryStartDate": "2026-05-11",
+    "entryEndDate": "2026-05-12",
+    "sourceUrl": "https://laurier-hub.com/lottery/",
+    "xPostUrl": "https://x.com/laurier_news/status/2053647479258898552?s=46",
+    "applyUrl": "",
+    "applyLabel": "",
+    "applyType": "unknown"
+  },
+  {
+    "key": "アビスアイ|ゲームアーク×宝島|全国規模|5/11 〜 5/17",
+    "productName": "アビスアイ",
+    "storeName": "ゲームアーク×宝島",
+    "area": "全国規模",
+    "entryPeriod": "5/11 〜 5/17",
+    "lotteryDate": "5/20",
+    "salesPeriod": "-",
+    "entryStartDate": "2026-05-11",
+    "entryEndDate": "2026-05-17",
+    "sourceUrl": "https://laurier-hub.com/lottery/",
+    "xPostUrl": "https://x.com/laurier_news/status/2053647840409502152?s=46",
+    "applyUrl": "",
+    "applyLabel": "",
+    "applyType": "unknown"
+  },
+  {
     "key": "MEGAドリームex|しまむらパーク|通販店舗|5/10 〜 5/16",
     "productName": "MEGAドリームex",
     "storeName": "しまむらパーク",
