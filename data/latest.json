@@ -528,22 +528,6 @@
     "applyType": "unknown"
   },
   {
-    "key": "アビスアイ|Joshin(ジョーシン）|通販店舗|5/9 〜 5/12",
-    "productName": "アビスアイ",
-    "storeName": "Joshin(ジョーシン）",
-    "area": "通販店舗",
-    "entryPeriod": "5/9 〜 5/12",
-    "lotteryDate": "5/19",
-    "salesPeriod": "5/22 〜 5/28",
-    "entryStartDate": "2026-05-09",
-    "entryEndDate": "2026-05-12",
-    "sourceUrl": "https://laurier-hub.com/lottery/",
-    "xPostUrl": "https://x.com/laurier_news/status/2052767343336681975?s=46",
-    "applyUrl": "",
-    "applyLabel": "",
-    "applyType": "unknown"
-  },
-  {
     "key": "アビスアイ|ヨドバシドットコム|通販店舗|5/11 〜 5/12",
     "productName": "アビスアイ",
     "storeName": "ヨドバシドットコム",
@@ -779,22 +763,6 @@
     "entryEndDate": "2026-04-22",
     "sourceUrl": "https://laurier-hub.com/lottery/",
     "xPostUrl": "https://x.com/laurier_news/status/2046062664212980179?s=46",
-    "applyUrl": "",
-    "applyLabel": "",
-    "applyType": "unknown"
-  },
-  {
-    "key": "アビスアイ|ヤマダデンキ|全国規模|4/20 〜 4/21",
-    "productName": "アビスアイ",
-    "storeName": "ヤマダデンキ",
-    "area": "全国規模",
-    "entryPeriod": "4/20 〜 4/21",
-    "lotteryDate": "5/19",
-    "salesPeriod": "5/22 〜 5/28",
-    "entryStartDate": "2026-04-20",
-    "entryEndDate": "2026-04-21",
-    "sourceUrl": "https://laurier-hub.com/lottery/",
-    "xPostUrl": "https://x.com/laurier_news/status/2046034920062230712?s=46",
     "applyUrl": "",
     "applyLabel": "",
     "applyType": "unknown"
